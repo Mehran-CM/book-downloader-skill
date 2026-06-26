@@ -10,9 +10,19 @@ Downloads books from liber3.eth.limo and delivers them as PDFs. If the best avai
 
 This skill requires **Claude in Chrome** browser tools. If Chrome isn't connected, tell the user to open Chrome with the extension.
 
+## Important: How Downloads Work on Liber3
+
+Liber3 downloads files **directly to the user's Downloads folder** — it does NOT open a new browser tab. After clicking a Download button, you must poll the Downloads folder using `Glob` to detect when the file appears. The download starts immediately but may take 10-60 seconds depending on file size and IPFS gateway speed.
+
+Before clicking Download, always request access to the user's Downloads folder (via `request_cowork_directory`) if you don't already have it. You'll need this to detect the downloaded file and to move it to the output location.
+
 ## Workflow
 
-### Step 1: Search for the book
+### Step 1: Ensure Downloads folder access
+
+Request access to `~/Downloads` using `request_cowork_directory` if not already connected. You need this to detect downloaded files.
+
+### Step 2: Search for the book
 
 1. Get browser tab context (`tabs_context_mcp` with `createIfEmpty: true`)
 2. Navigate to `https://liber3.eth.limo/`
@@ -21,14 +31,14 @@ This skill requires **Claude in Chrome** browser tools. If Chrome isn't connecte
 5. Click it, type the book name, press Enter
 6. Wait 5-8 seconds — this site is slow to return results. If you see a loading spinner, wait another 5 seconds.
 
-### Step 2: Pick the best result
+### Step 3: Pick the best result
 
 Use `get_page_text` to read all search results. Each result follows this pattern:
 
-```
+\`\`\`
 Title
 Author / [Publisher /] Year / Language / format / Size / IPFS
-```
+\`\`\`
 
 **Selection priority** (auto-pick the best match):
 
@@ -40,49 +50,43 @@ Author / [Publisher /] Year / Language / format / Size / IPFS
 
 If no English PDF or EPUB exists, tell the user what's available and ask how to proceed.
 
-### Step 3a: Download PDF (if format is PDF)
+### Step 4: Download the file
 
-1. Find the "Download" element for the chosen result using `find` tool (search for "Download" buttons/links).
-2. The Download buttons appear in order matching the search results. Count from the top to click the right one. The first Download corresponds to the first search result, second to second, etc.
-3. Click the Download element. This opens a **new tab** with the PDF via an IPFS gateway.
-4. The IPFS gateway is slow. Wait 10 seconds, then check the new tab. If still loading (blank page with progress bar), wait another 10 seconds. Repeat up to 3 times (total ~30 seconds for large files).
-5. The new tab URL looks like: `https://gateway-ipfs.st/ipfs/{hash}?filename={BookName}.pdf`
-6. Once the PDF loads in Chrome's viewer, the toolbar may be hidden. **Hover the mouse near the top of the page** to reveal it. The toolbar shows page numbers, zoom controls, and a download icon (↓) in the top-right corner.
-7. Click the download icon (↓) in the top-right of the PDF viewer toolbar. This saves the file to the user's Downloads folder.
-8. The file will be saved as `{BookName}.pdf` in `~/Downloads/`. Move it to the user's workspace `OUTPUTS/books/` folder.
+1. **Snapshot the Downloads folder** before clicking Download. Use `Glob` with pattern `*` in the Downloads folder to get a list of existing files. This lets you detect the new file by comparing before/after.
+2. Find the "Download" element for the chosen result using `find` tool (search for "Download" buttons/links). The Download buttons appear in order matching the search results — first Download = first result, second = second, etc.
+3. Click the Download element. The file will start downloading directly to the user's Downloads folder (no new tab opens).
+4. **Poll for the downloaded file.** Use `Glob` with a pattern matching the book title (e.g., `*Ideaflow*`) in the Downloads folder. Wait 5 seconds between checks. The file may appear with a `.crdownload` extension while still downloading — keep waiting until the final `.pdf` or `.epub` extension appears. Repeat up to 6 times (total ~30 seconds). For large files (>10 MB), extend to 12 attempts (~60 seconds).
+5. If a login modal appears instead of a download starting, dismiss it (click the X) and try a different Download button. Not all Download buttons require login — sometimes only the "Recommend" or other actions do. If the correct Download button keeps requiring login, tell the user.
+6. If the file doesn't appear after polling, try the next best matching result from the search.
 
-**Important**: The IPFS gateway can be slow or fail. If the tab shows an error or stays blank after 30 seconds, go back to the search results and try the next best PDF result. The site sometimes shows a popup "Download failed? Try switching source." — dismiss it (click OK) and try a different result.
+### Step 5: Convert EPUB to PDF (if needed)
 
-### Step 3b: Download EPUB and convert to PDF
+If the downloaded file is EPUB:
 
-If the best result is EPUB:
+1. Navigate to `https://www.pdf2go.com/epub-to-pdf` in the browser tab.
+2. Wait 3 seconds for the page to load.
+3. Find the file input element using `find` (search for "file input for uploading" or "Choose file").
+4. Use `file_upload` to upload the EPUB file from the Downloads folder to the file input element.
+5. Wait for the file to appear in the upload area (2-3 seconds).
+6. Click the "START" button (the one inside the red upload area, or the blue one below it).
+7. Wait for conversion to complete (10-60 seconds). The page will redirect to a download page showing the converted file.
+8. Click the "Download" button on the results page.
+9. Poll the Downloads folder for the new PDF file (same polling approach as Step 4).
 
-1. Click the Download element for the EPUB result. A new tab opens.
-2. Wait 5 seconds. Copy the full URL from the new tab (visible in `tabs_context_mcp`).
-3. Open a new tab and navigate to `https://www.pdf2go.com/epub-to-pdf`
-4. Wait 3 seconds for the page to load.
-5. Find the "URL" icon/label at the bottom of the red upload area (use `find` to search for "URL" element).
-6. Click it. A URL input field appears with placeholder "http://www.example.com/examplefile.pdf".
-7. Click the URL input field, paste the IPFS URL from step 2.
-8. Click the "+ ADD" button.
-9. Wait for the file to upload (watch for the file to appear in the upload area, may take 10-30 seconds depending on file size).
-10. Click the "START" button.
-11. Wait for conversion to complete. The page will redirect to a download page. This can take 15-60 seconds.
-12. On the download page, click the "Download" button to get the converted PDF.
-13. Save the file to the user's OUTPUTS folder.
+### Step 6: Deliver the file
 
-### Step 4: Deliver the file
-
-Save the PDF to `OUTPUTS/books/` in the user's workspace folder. Use the book title as the filename (e.g., `Atomic Habits - James Clear.pdf`).
+Move the final PDF to the user's workspace. Use the book title and author as the filename (e.g., `Ideaflow - Jeremy Utley, Perry Klebahn.pdf`).
 
 Use `present_files` to share the file with the user.
 
 ## Troubleshooting
 
-- **IPFS gateway timeout**: The gateway (`gateway-ipfs.st`) can be unreliable. If one download fails, try the next matching result from the search.
-- **pdf2go upload fails**: The IPFS URL might be too long or the gateway might block external fetches. If URL upload fails, try downloading the EPUB file first and then uploading it directly via the file upload on pdf2go.
+- **Login modal appears**: Some buttons on Liber3 require login. Dismiss the modal and try a different Download button, or try a different search result for the same book.
+- **IPFS gateway timeout / file doesn't download**: The IPFS gateway can be unreliable. Try the next matching result from the search.
+- **pdf2go upload fails**: If `file_upload` fails, try clicking the upload area directly and using the native file picker approach.
 - **No results on Liber3**: Try variations of the book title (shorter query, author name only, removing subtitles).
 - **Page not loading**: liber3.eth.limo uses IPFS/ENS and can be slow. Wait up to 15 seconds before retrying.
+- **Duplicate files in Downloads**: Liber3 filenames include the book title and "_liber3" suffix. If there are duplicates (e.g., with "(1)" appended), use the most recent one.
 
 ## Notes
 
